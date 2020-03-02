@@ -4,7 +4,7 @@ The tool copies packets from source PCAP files to a destination PCAP file.
 Packets that are not of the the type IP are dropped. In addition, packets can
 be filtered by IP Version, one matching address or two matching addresses.
 
-Usage:
+## Usage:
 
 ipgrep PATTERN OUTFILE INFILE1 [INFILE2 ...]
 
@@ -36,3 +36,13 @@ ipgrep v6 out.pcap dump.pcap = all IPv6 packets
 ipgrep ff02:::::::fb out.pcap dump.pcap = packets comming from or going to this address
 
 ipgrep 192.168.1.7-216.58.207.78 out.pcap dump1.pcap dump2.pcap = packets inbetween these
+
+## Compile:
+
+Using a Linux or Unix based system just compile the C code that is in one file and uses only standard libs:
+
+% gcc -o ipgrep ipgrep.c
+
+Windows:
+
+The version ipgrep4mingw64.c should be working compiled by mingw-w64.
