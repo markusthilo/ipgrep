@@ -1,68 +1,42 @@
-/* IPGREP v0.2.1 */
+/* IPGREP v0.3-20201015 */
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <netinet/in.h>
 #include <unistd.h>
 
-/* Structure for IP v4 adresses */
-struct ipv4 {
-	uint32_t addr;
-	int error;
-};
-
-/* Structure for IP v6 adresses */
-struct ipv6 {
-	uint64_t addr[2];
-	int error;
-};
-
-/* Structure for PCAP file header */
-struct pcapheader {
-	uint8_t raw[24];
-	uint32_t magic_number, snaplen;
-};
-
-/* Structure for packet header */
-struct packetheader {
-	uint8_t raw[16];
-	uint32_t incl_len;
-	int error;
-};
-
-/* Structure for Ethernet II layer */
-struct ethernetlayer {
-	uint8_t raw[14];
-	uint16_t type;
-	int error;
-};
-
-/* Structure for IP v4 layer */
-struct ipv4layer {
-	uint8_t raw[20];
-	uint32_t src_addr, dst_addr;
-	int error;
-};
-
-/* Structure for IP v6 layer */
-struct ipv6layer {
-	uint8_t raw[40];
-	uint64_t src_addr[2], dst_addr[2];
-	int error;
-};
-
-/* Structure for grep pattern */
-struct gpattern {
-	struct ipv4 ipv4a, ipv4b;
-	struct ipv6 ipv6a, ipv6b;
-	char type;
-};
-
-/* Give length of a string */
-int stringlength(char *string) {
-	int i = 0;
-	while (string[i] != 0) i++;
-	return i;
+/* Print help */
+void help(int r){
+	printf("\nIPGREP v0.3-20201015\n\n");
+	printf("Written by Markus Thilo\n");
+	printf("September 2018 to November 2019, GPL-3\n");
+	printf("Only the C standard library is used, no LIBPCAP.\n");
+	printf("The tool copies packets from source PCAP files to a destination PCAP file.\n");
+	printf("Packets that are not of the the type IP are dropped. In addition, packets can\n");
+	printf("be filtered by IP Version, one matching address or two matching addresses.\n\n");
+	printf("Usage:\n\n");
+	printf("ipgrep PATTERN OUTFILE INFILE1 [INFILE2 ...]\n\n");
+	printf("The file format ist PCAP.\n\n");
+	printf("Patterns:\n");
+	printf("ip\t\tCopy all IP packets.\n");
+	printf("v4\t\tCopy all IPv4 packets.\n");
+	printf("v6\t\tCopy all IPv6 packets.\n");
+	printf("ADDRESS\tCopy packets if source or destination address matches.\n");
+	printf("ADDRESS-ADDRESS\tCopy packets if one address is source and one is the destination.\n\n");
+	printf("The PCAP file header is taken from the first input file. These values are untuched:\n");
+	printf("Magic number, version number, time correction, accuracy of timestamps, data link type.\n");
+	printf("Only maximal length of captured packets (snaplen) is adjusted.\n");
+	printf("Compression of IPv6 addresses removing colons does not work.\n\n");
+	printf("Examples:\n");
+	printf("ipgrep ip out.pcap dump.pcap = all IP packets\n");
+	printf("ipgrep v6 out.pcap dump.pcap = all IPv6 packets\n");	
+	printf("ipgrep ff02:::::::fb out.pcap dump.pcap = packets comming from or going to this address\n");
+	printf("ipgrep 192.168.1.7-216.58.207.78 out.pcap dump1.pcap dump2.pcap = packets inbetween these\n\n");
+	printf("Use this piece of software on your own risk. Accuracy is not garanteed.\n");
+	printf("Report bugs to markus.thilo@gmail.com.\n");
+	printf("Project page: https://github.com/markusthilo/netflower\n\n");
+	exit(r);
 }
 
 /* Convert given decimal number (char) integer */
@@ -80,143 +54,142 @@ int hex2int(char c) {
 	return -1;
 }
 
-/* Convert string to integer inbetween 0 and 255 */
-int str2byte(char *string) {
-	const int factor[] = { 1, 10, 100 };
-	int d, n = 0, slen = stringlength(string), i, j = 0;
-	if ( ( slen < 1 ) || ( slen > 3 ) ) { return -1; }
-	for (i=slen-1; i>=0; i--) {
-		d = dec2int(string[i]);
-		if ( d < 0) { return -1; }
-		n += d * factor[j++];
+/* Convert decimal byte in string to integer inbetween 0 and 255 */
+int decbyte2int(char *string, int *s_pos) {
+	if ( string[*s_pos] < '0' || string[*s_pos] > '9'  ) return -1;
+	int byte = 0, cifer;
+	while ( string[*s_pos] != 0 && string[*s_pos] != '.' && string[*s_pos] != '-' ) {
+		cifer = dec2int(string[*s_pos]);
+		*s_pos += 1;
+		if ( cifer < 0 ) return -1;
+		byte = ( byte * 10 ) + cifer;
 	}
-	if ( n > 255 ) { return -1; }
-	return n;
+	if ( byte > 255 ) return -1;
+	return byte;
 }
 
-/* Convert string to binary IPv4 */ 
-struct ipv4 str2ipv4(char *string) {
-	unsigned long factor = 0x1000000;
-	struct ipv4 out;
-	int b, i, j = 0;
-	char byte[4] = "";
-	out.addr = 0;
-	out.error = -1;
-	for (i=0; i<=stringlength(string); i++) {
-		if ( ( string[i] == '.' ) || ( string[i] == 0 ) ) {
-			byte[j] = 0;
-			b = str2byte(byte);
-			if ( b < 0 ) return out;
-			out.addr += b * factor;
-			j = 0;
-			factor = factor >> 8;
-		} else {
-			byte[j++] = string[i];
-			if ( j > 3 ) { return out; }
-		}
-
+/* Convert 2 hexadecimal bytes in string to long integer inbetween 0 and 0xffff */
+long hexbytes2long(char *string, int *s_pos) {
+	long bytes = 0;
+	int cifer;
+	while ( string[*s_pos] != 0 && string[*s_pos] != ':' && string[*s_pos] != '-' ) {
+		cifer = hex2int(string[*s_pos]);
+		*s_pos += 1;
+		if ( cifer < 0 ) return -1;
+		bytes = ( bytes << 4 ) + cifer;
 	}
-	out.error = 0;
-	return out;
+	if ( bytes > 0xffff ) return -1;
+	return bytes;
 }
+
+/* Structure for IP v4 adresses */
+struct ipv4 {
+	uint32_t addr;
+	int error;
+};
+
+
+/* Convert string to binary IP address */
+struct ipv4 str2ipv4(char *string, int *s_pos) {
+	struct ipv4 ip;
+	ip.addr = 0;
+	ip.error = -1;
+	int p_cnt = 0, byte;
+	while (1) {
+		byte = decbyte2int(string, s_pos);
+		if ( byte < 0 ) return ip;
+		ip.addr = ( ip.addr << 8 ) + byte;
+		if ( string[*s_pos] == 0 || string[*s_pos] == '-' || p_cnt++ > 3 ) break;
+		*s_pos +=1;
+	}
+	if ( p_cnt != 3 ) return ip;
+	ip.error = 0;
+	return ip;
+}
+
+
+/* Structure for IP v6 adresses */
+struct ipv6 {
+	uint64_t addr[2];
+	int error;
+};
 
 /* Convert string to binary IPv6 */ 
-struct ipv6 str2ipv6(char *string) {
-	unsigned long n, factor = 1;
-	struct ipv6 out;
-	int i, j = 1, k = 4;
-	out.addr[0] = 0;
-	out.addr[1] = 0;
-	out.error = -1;
-	for (i=stringlength(string)-1; i>=0; i--) {
-		if ( string[i] == ':' ) {
-			if ( k < 0 ) return out;
-			factor = factor << ( k << 2 );
-			k = 5;
-		} else {
-			n = hex2int(string[i]);
-			if ( n == -1 ) return out;
-			out.addr[j] += n * factor;
-			factor = factor << 4;
+struct ipv6 str2ipv6(char *string, int *s_pos) {
+	struct ipv6 ip;
+	int p_cnt = 0, i = 0;
+	long bytes;
+	while (1) {
+		bytes = hexbytes2long(string, s_pos);
+		if ( bytes < 0 ) {
+			ip.addr[0] = 0;
+			ip.addr[1] = 0;
+			return ip;
 		}
-		if ( factor == 0 ) { 
-			if ( j-- == 0 ) {
-				if ( i > 0 ) return out;
-				break;
-			}
-			factor = 1;
-		}
-		if ( k-- == 0 ) return out;
+		ip.addr[i] = ( ip.addr[i] << 16 ) + bytes;
+		if ( string[*s_pos] == 0 || string[*s_pos] == '-' || p_cnt++ > 7 ) break;
+		*s_pos +=1;
+		if ( p_cnt == 4 ) i = 1;
 	}
-	if ( j < 0 ) out.error = 0;
-	return out;
+	if ( p_cnt != 7 ) {
+		ip.addr[0] = 0;
+		ip.addr[1] = 0;
+	}
+	return ip;
 }
 
+/* Structure for grep pattern */
+struct gpattern {
+	struct ipv4 ipv4a, ipv4b;
+	struct ipv6 ipv6a, ipv6b;
+	char type;
+};
+
 /* Get grep pattern */
-struct gpattern getpattern(char *instr) {
-	struct gpattern r;	// to return
-	char ipstr[40];	// to copy ip address in
-	int ipstrptr = 0, instrptr = 0, instrlen = stringlength(instr);
-	r.type = 'e';	// e = error
-	if ( ( instrlen < 2 ) || ( instrlen > 79 ) ) return r;	// return error if length is out of range
-	if ( ( instrlen == 2 ) && ( instr[0] == 'i' ) && ( instr[1] == 'p' ) ) {	// ip for all ip packets
-		r.type = 'i';
-		return r;
+struct gpattern getpattern(char *string) {
+	struct gpattern gp;	// to return
+	int slen = strlen(string);
+	gp.type = 'e';	// e = error
+	if ( ( slen < 2 ) || ( slen > 79 ) ) return gp;	// return error if length is out of range
+	if ( ( slen == 2 ) && ( string[0] == 'i' ) && ( string[1] == 'p' ) ) {	// ip for all ip packets
+		gp.type = 'i';
+		return gp;
 	}
-	if ( ( instrlen == 2 ) &&  ( instr[0] == 'v' ) ) {	// v4 or v6 for packets of either v4 or v6
-		if ( instr[1] == '4' ) {
-			r.type = '4';
-			return r;
-		} else if ( instr[1] == '6' ) {
-			r.type = '6';
-			return r;
-		} else return r;
+	if ( ( slen == 2 ) &&  ( string[0] == 'v' ) ) {	// v4 or v6 for packets of either v4 or v6
+		if ( string[1] == '4' ) {
+			gp.type = '4';
+			return gp;
+		} else if ( string[1] == '6' ) {
+			gp.type = '6';
+			return gp;
+		} else return gp;
 	}
-	while (1) {
-		if ( ( instr[instrptr] == '-' ) && ( r.type = 'e' ) ) {	// - seperates two ip addresses
-			instrptr++;
-			ipstr[ipstrptr] = 0;
-			ipstrptr = 0;
-			r.ipv4a = str2ipv4(ipstr);
-			if ( r.ipv4a.error == 0 ) {
-				r.type = 'l';
-				continue;
-			}
-			r.ipv6a = str2ipv6(ipstr);
-			if ( r.ipv6a.error == 0 ) {
-				r.type = 'L';
-				continue;
-			}
-			return r;
-		}
-		if ( instr[instrptr] == 0 ) {	// end of string
-			ipstr[ipstrptr] = 0;
-			if ( r.type == 'e' ) {
-				r.ipv4a = str2ipv4(ipstr);
-				if ( r.ipv4a.error == 0 ) {
-					r.type = 's'; 
-					return r;
-				}	
-				r.ipv6a = str2ipv6(ipstr);
-				if ( r.ipv6a.error == 0 ) {
-					r.type = 'S';
-					return r;
-				}
-			}
-			if ( r.type == 'l' ) {
-				r.ipv4b = str2ipv4(ipstr);
-				if ( r.ipv4b.error != 0 ) r.type = 'e';
-				return r;
-			}
-			if ( r.type == 'L') {
-				r.ipv6b = str2ipv6(ipstr);
-				if ( r.ipv6b.error != 0 ) r.type = 'e';
-				return r;
-			}
-			return r;
-		}
-		ipstr[ipstrptr++] = instr[instrptr++];
+	int s_pos = 0;	// pointer to char in string
+	gp.ipv4a = str2ipv4(string, &s_pos);	// v4?
+	if ( gp.ipv4a.error == 0 ) gp.type = 's';
+	else {
+		s_pos = 0;	// reset to first char in string
+		gp.ipv6a = str2ipv6(string, &s_pos);	// v6?
+		if ( gp.ipv6a.error != 0 ) return gp;
+		gp.type = 'S';
 	}
+	if ( s_pos == slen ) return gp;	// one address?
+	if ( string[s_pos++] != '-' ) {	// no link?
+		gp.type = 'e';
+		return gp;
+	}
+	switch (gp.type) {
+		case 's':	// v4
+			gp.ipv4b = str2ipv4(string, &s_pos);
+			if ( gp.ipv4b.error == 0 ) gp.type = 'l';
+			else gp.type = 'e';
+			break;
+		case 'S':	// v6
+			gp.ipv6b = str2ipv6(string, &s_pos);
+			if ( gp.ipv6b.error == 0 ) gp.type = 'L';
+			else gp.type = 'e';
+	}
+	return gp;
 }
 
 /* Read raw data from PCAP file (n bytes) */
@@ -287,6 +260,12 @@ uint64_t extract64bits (uint8_t *bytes, int pos ) {
 		|	( (uint64_t) bytes[pos+7] );
 }
 
+/* Structure for PCAP file header */
+struct pcapheader {
+	uint8_t raw[24];
+	uint32_t magic_number, snaplen, network;
+};
+
 /* Read PCAP file header */
 struct pcapheader readpcapheader (FILE *fin) {
 	struct pcapheader pcaph;
@@ -295,14 +274,25 @@ struct pcapheader readpcapheader (FILE *fin) {
 		exit(1);
 	}
 	pcaph.magic_number = extract32bits(pcaph.raw, 0);
-	if ( pcaph.magic_number == 0xd4c3b2a1 ) pcaph.snaplen = extract32swapped(pcaph.raw, 16);
-	else if ( pcaph.magic_number == 0xa1b2c3d4 ) pcaph.snaplen = extract32bits(pcaph.raw, 16);
-	else {
+	if ( pcaph.magic_number == 0xd4c3b2a1 ) {
+		pcaph.snaplen = extract32swapped(pcaph.raw, 16);
+		pcaph.network = extract32swapped(pcaph.raw, 20);
+	} else if ( pcaph.magic_number == 0xa1b2c3d4 ) {
+		pcaph.snaplen = extract32bits(pcaph.raw, 16);
+		pcaph.network = extract32bits(pcaph.raw, 20);
+	} else {
 		fprintf(stderr, "Error: an input file does not look like PCAP.\n");
 		exit(1);
 	}
 	return pcaph;
 }
+
+/* Structure for packet header */
+struct packetheader {
+	uint8_t raw[16];
+	uint32_t incl_len;
+	int error;
+};
 
 /* Read packet header in PCAP file */
 struct packetheader readpacketheader (FILE *fin, uint32_t magic_number) {
@@ -314,14 +304,46 @@ struct packetheader readpacketheader (FILE *fin, uint32_t magic_number) {
 	return ph;
 }
 
-/* Read Ethernet Layer II */
-struct ethernetlayer readethernetlayer (FILE *fin) {
-	struct ethernetlayer el;
-	if ( readbytes(fin, el.raw, 14) == 1 ) { el.error = 1; return el; }
-	el.type = extract16bits(el.raw, 12);
-	el.error = 0;
-	return el;
+/* Structure for the packet content */
+struct packetcont {
+	uint8_t raw[14];
+	int ipv, len, error;
+};
+
+/* Read null or data link layer */
+struct packetcont readcontent(FILE *fd, uint32_t network) {
+	struct packetcont pc;
+	pc.ipv = 0;
+	switch (network) {	// data link type
+		case 0:	// null
+			pc.len = 4;
+			pc.error = readbytes(fd, pc.raw, pc.len);	// family and version
+			if ( pc.error == 1 ) return pc;
+			uint32_t family = extract32bits(pc.raw, 0);
+			switch (family) {
+				case 0x2000000: pc.ipv = 4; break;	// ipv4
+				case 0x1800000: pc.ipv = 6;	// ipv6
+			}
+			break;
+		case 1:	// ethernet
+			pc.len = 14;
+			pc.error = readbytes(fd, pc.raw, pc.len);	// ethernet layer
+			if ( pc.error == 1 ) return pc;
+			uint16_t type = extract16bits(pc.raw, 12);	// get type
+			switch (type) {
+				case 0x0800: pc.ipv = 4; break;	// ipv4
+				case 0x86dd: pc.ipv = 6;	// ipv6
+			}
+	}
+	return pc;
 }
+
+/* Structure for IP v4 layer */
+struct ipv4layer {
+	uint8_t raw[20];
+	uint32_t src_addr, dst_addr;
+	int error;
+};
 
 /* Read IPv4 */
 struct ipv4layer readipv4layer (FILE *fin) {
@@ -332,6 +354,13 @@ struct ipv4layer readipv4layer (FILE *fin) {
 	il.error = 0;
 	return il;
 }
+
+/* Structure for IP v6 layer */
+struct ipv6layer {
+	uint8_t raw[40];
+	uint64_t src_addr[2], dst_addr[2];
+	int error;
+};
 
 /* Read IPv6 */
 struct ipv6layer readipv6layer (FILE *fin) {
@@ -365,54 +394,13 @@ void skippayload (FILE *fin, uint32_t n) {
 	}
 }
 
-/* Print help */
-void help(int r){
-	printf("\nIPGREP v0.2.1\n\n");
-	printf("Written by Markus Thilo\n");
-	printf("September 2018 to November 2019, GPL-3\n");
-	printf("Only the C standard library is used, no LIBPCAP.\n");
-	printf("The tool copies packets from source PCAP files to a destination PCAP file.\n");
-	printf("Packets that are not of the the type IP are dropped. In addition, packets can\n");
-	printf("be filtered by IP Version, one matching address or two matching addresses.\n\n");
-	printf("Usage:\n\n");
-	printf("ipgrep PATTERN OUTFILE INFILE1 [INFILE2 ...]\n\n");
-	printf("The file format ist PCAP.\n\n");
-	printf("Patterns:\n");
-	printf("ip\t\tCopy all IP packets.\n");
-	printf("v4\t\tCopy all IPv4 packets.\n");
-	printf("v6\t\tCopy all IPv6 packets.\n");
-	printf("ADDRESS\tCopy packets if source or destination address matches.\n");
-	printf("ADDRESS-ADDRESS\tCopy packets if one address is source and one is the destination.\n\n");
-	printf("The PCAP file header is taken from the first input file. These values are untuched:\n");
-	printf("Magic number, version number, time correction, accuracy of timestamps, data link type.\n");
-	printf("Only maximal length of captured packets (snaplen) is adjusted.\n");
-	printf("Compression of IPv6 addresses removing colons does not work.\n\n");
-	printf("Examples:\n");
-	printf("ipgrep ip out.pcap dump.pcap = all IP packets\n");
-	printf("ipgrep v6 out.pcap dump.pcap = all IPv6 packets\n");	
-	printf("ipgrep ff02:::::::fb out.pcap dump.pcap = packets comming from or going to this address\n");
-	printf("ipgrep 192.168.1.7-216.58.207.78 out.pcap dump1.pcap dump2.pcap = packets inbetween these\n\n");
-	printf("Use this piece of software on your own risk. Accuracy is not garanteed.\n");
-	printf("Report bugs to markus.thilo@gmail.com.\n");
-	printf("Project page: https://github.com/markusthilo/netflower\n\n");
-	exit(r);
-}
-
 /* Main function - program starts here*/
 int main(int argc, char **argv) {
 	if ( ( argc < 2 )
 	|| ( ( argv[1][0] == '-' ) && ( argv[1][1] == '-' ) && ( argv[1][2] == 'h' ) )
 	|| ( ( argv[1][0] == '-' ) && ( argv[1][1] == 'h' ) ) )  help(0);
 	if ( argc < 4 ) help(1);	// print help on not enougth command line arguments
-	int v, il_error;
-	uint32_t maxsnaplen = 0;	// to put the maximal length of packets in the output pcap file header
-	uint64_t pcnt = 0;	// count copied packets
-	FILE *fin, *fout;	// file pointers
-	struct pcapheader pcaph;	// to read pcap file headers
-	struct packetheader ph;	// to read packet headers
-	struct ethernetlayer el;	// to read ethernet layers
-	struct ipv4layer v4l;	// to read ipv4 layers
-	struct ipv6layer v6l;	// to read ipv6 layers
+	int v;	// to grep vor ip version
 	struct gpattern gp = getpattern(argv[1]);	// get grep pattern
 	switch (gp.type) {
 		case 'i': v = 0; break;	// 0 means ipv4 or v6 
@@ -421,18 +409,28 @@ int main(int argc, char **argv) {
 		case 'l': v = 1; break;	// 1 means ipv4
 		case '6':
 		case 'S':
-		case 'L': v = -1; break;	// -1 menas ipv6
+		case 'L': v = -1; break;	// -1 means ipv6
 		default	: help(1);
 	}
 	if ( access(argv[2], F_OK) != -1 ) {	// check for existing output file
 		fprintf(stderr, "Error: file %s exists.\n", argv[2]);
 		exit(1);
 	}
+	FILE *fout;	// file pointer for output pcap file
 	fout = fopen(argv[2], "wb");	// open output file
 	if ( fout == NULL ) {
 		fprintf(stderr, "Error: could not open output file %s.\n", argv[2]);
 		exit(1);
 	}
+	int il_error, rem_len;	// error handling, remaining bytes in packet
+	uint32_t maxsnaplen = 0, network;	// to put the maximal length of packets in the output pcap file header, network type
+	uint64_t pcnt = 0;	// count copied packets
+	FILE *fin;	// file pointer for input pcap file(s)
+	struct pcapheader pcaph;	// to read pcap file headers
+	struct packetheader ph;	// to read packet headers
+	struct packetcont pc;	// to read packet content
+	struct ipv4layer v4l;	// to read ipv4 layers
+	struct ipv6layer v6l;	// to read ipv6 layers
 	for (int i = 3; i < argc; i++) {	// main loop - go through the input files
 		fin = fopen(argv[i], "rb");	// open input file
 		if ( fin == NULL ) {
@@ -441,15 +439,24 @@ int main(int argc, char **argv) {
 		}
 		pcaph = readpcapheader(fin);	// read pcap file header
 		if ( pcaph.snaplen > maxsnaplen ) maxsnaplen = pcaph.snaplen;	// update maximal snaplen for output pcap file
-		if ( i == 3) writebytes(fout, pcaph.raw, 24);	// if 1st input file then write it to output file
+		if ( i == 3) {	// if 1st input file then write it to output file
+			writebytes(fout, pcaph.raw, 24);
+			network = pcaph.network;
+		} else if ( network != pcaph.network ) {
+			fprintf(stderr, "Error: inconsistent network type in file %s.\n", argv[i]);
+			exit(1);
+		}
 		do {	// loop through packets
 			ph = readpacketheader(fin, pcaph.magic_number);	// read packet header
+			rem_len = ph.incl_len;
 			if ( ph.error == 1 ) break;	// if not successful, end of file might be reached
-			el = readethernetlayer(fin);
-			if ( el.error == 1 ) break;
+			pc = readcontent(fin, pcaph.network);
+			rem_len -= pc.len;
+			if ( pc.error == 1 ) break;
 			il_error = 1;
-			if ( ( el.type == 0x0800 ) && ( v >= 0 ) ) {	// ip v4
+			if ( ( pc.ipv == 4 ) && ( v >= 0 ) ) {	// ip v4
 				v4l = readipv4layer(fin);
+				rem_len -= 20;
 				if ( v4l.error == 1 ) break;
 				if (	// filter
 						( gp.type == 'i' )
@@ -459,13 +466,14 @@ int main(int argc, char **argv) {
 												|| ( ( v4l.src_addr == gp.ipv4b.addr ) && ( v4l.dst_addr == gp.ipv4a.addr ) ) ) ) )
 				) {	// copy analized packet data
 					writebytes(fout, ph.raw, 16);
-					writebytes(fout, el.raw, 14);
+					writebytes(fout, pc.raw, pc.len);
 					writebytes(fout, v4l.raw, 20);
-					copypayload(fin, fout, ph.incl_len-34);	// copy the rest of the packet
+					copypayload(fin, fout, rem_len);	// copy the rest of the packet
 					pcnt++;
-				} else skippayload(fin, ph.incl_len-34);	// go to next packet
-			} else if ( ( el.type == 0x86dd ) && ( v <= 0 ) ) {	// ip v6
+				} else skippayload(fin, rem_len);	// go to next packet
+			} else if ( ( pc.ipv == 6 ) && ( v <= 0 ) ) {	// ip v6
 				v6l = readipv6layer(fin);
+				rem_len -= 40;
 				if ( v6l.error == 1 ) break;
 				if (	// filter
 						( gp.type == 'i' )
@@ -478,16 +486,16 @@ int main(int argc, char **argv) {
 													&& ( v6l.dst_addr[0] == gp.ipv6a.addr[0] ) && ( v6l.dst_addr[1] == gp.ipv6a.addr[1] ) ) ) ) )
 				) {	// copy analized packet data
 					writebytes(fout, ph.raw, 16);
-					writebytes(fout, el.raw, 14);
+					writebytes(fout, pc.raw, pc.len);
 					writebytes(fout, v6l.raw, 40);
-					copypayload(fin, fout, ph.incl_len-54);	// copy the rest of the packet
+					copypayload(fin, fout, rem_len);	// copy the rest of the packet
 					pcnt++;
-				} else skippayload(fin, ph.incl_len-54);	// go to next packet
+				} else skippayload(fin, rem_len);	// go to next packet
 			} else {	// skip other protocol or mismatch of protocol and filter
-				skippayload(fin, ph.incl_len-14);	// go to next packet
+				skippayload(fin, rem_len);	// go to next packet
 			}
 			il_error = 0;
-		} while ( ( ph.error == 0 ) && ( el.error == 0 ) );	// exit loop on error
+		} while ( ( ph.error == 0 ) && ( pc.error == 0 ) );	// exit loop on error
 		writeuint32(fout, maxsnaplen, 16, pcaph.magic_number);	// write maximal snap_len of all input files to output file
 		fclose(fin);
 	}
