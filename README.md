@@ -1,14 +1,24 @@
 # ipgrep
+Merge PCAP files and filter for IP addresse(s)
 
 The tool copies packets from source PCAP files to a destination PCAP file.
 Packets that are not of the the type IP are dropped. In addition, packets can
 be filtered by IP Version, one matching address or two matching addresses.
 
+This software might not work with all PCAP files. Ethernet link layer should work.
+PCAPNG is not supported.
+
+All you need is in the source file: ipgrep.c
+
+## Compile:
+gcc -o ipgrep ipgrep.c
+
+(or use make)
+
 ## Usage:
+./ipgrep PATTERN OUTFILE INFILE1 [INFILE2 ...]
 
-ipgrep PATTERN OUTFILE INFILE1 [INFILE2 ...]
-
-The file format ist PCAP.
+The file format ist PCAP (PCAPNG is not supported)
 
 Patterns:
 
@@ -27,22 +37,17 @@ Magic number, version number, time correction, accuracy of timestamps, data link
 Only maximal length of captured packets (snaplen) is adjusted.
 Compression of IPv6 addresses removing colons does not work.
 
-Examples:
+## Examples:
+./ipgrep ip out.pcap dump.pcap = all IP packets
 
-ipgrep ip out.pcap dump.pcap = all IP packets
+./ipgrep v6 out.pcap dump.pcap = all IPv6 packets
 
-ipgrep v6 out.pcap dump.pcap = all IPv6 packets
+./ipgrep ff02:::::::fb out.pcap dump.pcap = packets comming from or going to this address
 
-ipgrep ff02:::::::fb out.pcap dump.pcap = packets comming from or going to this address
+./ipgrep 192.168.1.7-216.58.207.78 out.pcap dump1.pcap dump2.pcap = packets inbetween these
 
-ipgrep 192.168.1.7-216.58.207.78 out.pcap dump1.pcap dump2.pcap = packets inbetween these
+Use this piece of software on your own risk. Accuracy is not garanteed.
 
-## Compile:
+Report bugs to: markus.thilo@gmail.com
 
-Using a Linux or Unix based system just compile the C code that is in one file and uses only standard libs:
-
-% gcc -o ipgrep ipgrep.c
-
-Windows:
-
-The version ipgrep4mingw64.c should be working compiled by mingw-w64.
+Project page: https://github.com/markusthilo/iprunner

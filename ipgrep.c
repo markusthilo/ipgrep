@@ -1,4 +1,4 @@
-/* IPGREP v0.3-20201015 */
+/* IPGREP v0.3-20201126 */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,14 +8,15 @@
 
 /* Print help */
 void help(int r){
-	printf("\nIPGREP v0.3-20201015\n\n");
+	printf("\nIPGREP v0.3-20201126\n\n");
 	printf("Written by Markus Thilo\n");
-	printf("September 2018 to November 2019, GPL-3\n");
-	printf("Only the C standard library is used, no LIBPCAP.\n");
+	printf("GPL-3\n");
 	printf("The tool copies packets from source PCAP files to a destination PCAP file.\n");
 	printf("Packets that are not of the the type IP are dropped. In addition, packets can\n");
 	printf("be filtered by IP Version, one matching address or two matching addresses.\n\n");
-	printf("Usage:\n\n");
+	printf("This software might not work with all PCAP files. Ethernet link layer should work.\n");
+	printf("PCAPNG is not supported.\n\n");
+	printf("Usage:\n");
 	printf("ipgrep PATTERN OUTFILE INFILE1 [INFILE2 ...]\n\n");
 	printf("The file format ist PCAP.\n\n");
 	printf("Patterns:\n");
@@ -35,7 +36,7 @@ void help(int r){
 	printf("ipgrep 192.168.1.7-216.58.207.78 out.pcap dump1.pcap dump2.pcap = packets inbetween these\n\n");
 	printf("Use this piece of software on your own risk. Accuracy is not garanteed.\n");
 	printf("Report bugs to markus.thilo@gmail.com.\n");
-	printf("Project page: https://github.com/markusthilo/netflower\n\n");
+	printf("Project page: https://github.com/markusthilo/ipgrep\n\n");
 	exit(r);
 }
 
@@ -500,6 +501,6 @@ int main(int argc, char **argv) {
 		fclose(fin);
 	}
 	fclose(fout);
-	printf("Number of copied packets: %lu\n", pcnt);
+	printf("Number of copied packets: %ju\n", pcnt);
 	exit(0);
 }
