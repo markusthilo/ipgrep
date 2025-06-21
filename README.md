@@ -7,6 +7,7 @@ be filtered by IP version (v4 or v6), one matching address or two matching addre
 
 No libpcap is used. This tool is based und standard libraries only.
 It works in one thread but should run very fast compared to complexer solutions.
+The programm has only 500 lines of pure C code.
 
 This software might not work with all variants of PCAP files. Ethernet link layer should work.
 PCAPNG is not supported.
